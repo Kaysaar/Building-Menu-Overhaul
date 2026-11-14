@@ -1,0 +1,181 @@
+package kaysaar.bmo.buildingmenu;
+
+import ashlib.data.plugins.ui.models.resizable.ImageViewer;
+import com.fs.starfarer.api.Global;
+import com.fs.starfarer.api.campaign.econ.Industry;
+import com.fs.starfarer.api.campaign.econ.MarketAPI;
+import com.fs.starfarer.api.combat.MutableStat;
+import com.fs.starfarer.api.graphics.SpriteAPI;
+import com.fs.starfarer.api.impl.campaign.econ.impl.BaseIndustry;
+import com.fs.starfarer.api.impl.campaign.ids.Stats;
+import com.fs.starfarer.api.loading.IndustrySpecAPI;
+import com.fs.starfarer.api.ui.ButtonAPI;
+import com.fs.starfarer.api.ui.CustomPanelAPI;
+import com.fs.starfarer.api.ui.LabelAPI;
+import com.fs.starfarer.api.ui.TooltipMakerAPI;
+import com.fs.starfarer.api.util.Misc;
+import com.fs.starfarer.api.util.Pair;
+import kaysaar.bmo.BmoListener;
+
+import java.awt.*;
+
+public class IndustryButton extends CustomButton {
+    public IndustrySpecAPI spec = (IndustrySpecAPI) buttonData;
+    public MarketAPI market;
+    public boolean isWithArrow;
+    CustomPanelAPI panelIndicator;
+    boolean arrowPointDown = true;
+    transient SpriteAPI arrows = Global.getSettings().getSprite("ui","sortIcon");
+    public IndustryButton(float width, float height, Object buttonData, float indent, MarketAPI market,Color base,Color bg, Color bright,boolean isWithArrow) {
+        super(width, height, buttonData, indent,base,bg,bright);
+        this.market = market;
+        this.isWithArrow = isWithArrow;
+    }
+
+    @Override
+    public ButtonAPI createButton(TooltipMakerAPI tooltip) {
+        return super.createButton(tooltip);
+
+    }
+
+    @Override
+    public void initializeUI() {
+        TooltipMakerAPI tooltip = panel.createUIElement(width,height,false);
+        TooltipMakerAPI tooltipActualButton = panel.createUIElement(width,height,false);
+        mainButton = createButton(tooltipActualButton);
+        createButtonContent(tooltip);
+        spec = (IndustrySpecAPI) buttonData;
+//        final BaseIndustry industry = (BaseIndustry) spec.getNewPluginInstance(market);
+//        tooltip.addTooltipTo(new TooltipMakerAPI.TooltipCreator() {
+//            @Override
+//            public boolean isTooltipExpandable(Object tooltipParam) {
+//                return true;
+//            }
+//
+//            @Override
+//            public float getTooltipWidth(Object tooltipParam) {
+//                return 400;
+//            }
+//
+//            @Override
+//            public void createTooltip(TooltipMakerAPI tooltip, boolean expanded, Object tooltipParam) {
+//                BuildingMenuMisc.createTooltipForIndustry((BaseIndustry) ((IndustrySpecAPI) buttonData).getNewPluginInstance(market), Industry.IndustryTooltipMode.ADD_INDUSTRY,tooltip,expanded,true,getTooltipWidth(tooltipParam),true);
+//            }
+//        }, panel,TooltipMakerAPI.TooltipLocation.RIGHT,false);
+        panel.addUIElement(tooltipActualButton).inTL(0,0);
+        panel.addUIElement(tooltip).inTL(0,0);
+    }
+
+    @Override
+    public void createButtonContent(TooltipMakerAPI tooltip) {
+        //290 width of Entire section
+        spec = (IndustrySpecAPI) buttonData;
+        BaseIndustry industry = (BaseIndustry) spec.getNewPluginInstance(market);
+        ImageViewer viewer = new ImageViewer(70,36,industry.getCurrentImage());
+        tooltip.addCustom(viewer.getComponentPanel(),0f);
+        tooltip.getPrev().getPosition().inTL(7, 2f);
+        LabelAPI label;
+
+        if(industry.isAvailableToBuild()||industry.getSpec().hasTag("parent_item")){
+            label=  tooltip.addPara(spec.getName(), Misc.getTooltipTitleAndLightHighlightColor(), 0f);
+        }
+        else{
+            label=  tooltip.addPara(spec.getName(), Misc.getNegativeHighlightColor(), 0f);
+
+        }
+        label.autoSizeToWidth(200);
+        label.getPosition().inTL(90, 20 - (label.computeTextHeight(label.getText()) / 2));
+
+        float heightLabel = 20 - (label.computeTextHeight(label.getText()) / 2);
+        if(isWithArrow){
+            panelIndicator = Global.getSettings().createCustom(15,15,null);
+            tooltip.addCustom(panelIndicator,0f).getPosition().inTL(90+label.computeTextWidth(label.getText())+5,13);
+
+        }
+        label = tooltip.addPara(getIndustryString(industry).one, getIndustryString(industry).two, 0f);
+        label.autoSizeToWidth(100);
+        label.getPosition().inTL(324 - indent - (label.computeTextWidth(label.getText()) / 2), heightLabel);
+
+        label = tooltip.addPara(getBuildingTimeToStr(spec), Color.ORANGE, 0f);
+        label.autoSizeToWidth(125);
+        label.getPosition().inTL(438 - indent - (label.computeTextWidth(label.getText()) / 2), heightLabel);
+        if (spec.getNewPluginInstance(market).getBuildCost() > Global.getSector().getPlayerFleet().getCargo().getCredits().get()) {
+            label = tooltip.addPara(getCostStr(spec,market), Misc.getNegativeHighlightColor(), 0f);
+        } else {
+            label = tooltip.addPara(getCostStr(spec,market), Color.ORANGE, 0f);
+
+        }
+
+        label.autoSizeToWidth(115);
+        label.getPosition().inTL(560 - indent - (label.computeTextWidth(label.getText()) / 2), heightLabel);
+    }
+
+    private Pair<String, Color> getIndustryString(BaseIndustry industry) {
+        Pair<String, Color> type = new Pair<>(BuildingMenuMisc.getIndustryString(industry.getSpec()),Misc.getTextColor());
+        if (industry.getSpec().hasTag("parent_item")) {
+            type.one = "Variable";
+            type.two = Color.ORANGE;
+        } else if (industry.isIndustry()) {
+            type.one = "Industry";
+            type.two = Color.ORANGE;
+            if (market.getStats().getDynamic().getMod(Stats.MAX_INDUSTRIES).getFlatBonus()-getAmountOfIndustriesFromMarket()<=0){
+                type.two = Misc.getNegativeHighlightColor();
+            }
+        } else if (industry.isStructure()) {
+            type.one = "Structure";
+            type.two = Misc.getTextColor();
+        }
+        return type;
+    }
+
+    public String getBuildingTimeToStr(IndustrySpecAPI spec) {
+        if (spec.hasTag("parent_item")) {
+            return "Variable";
+        }
+
+        return "" + (int) spec.getBuildTime();
+    }
+
+    public String getCostStr(IndustrySpecAPI spec,MarketAPI market) {
+        if (spec.hasTag("parent_item")) {
+            return "Variable";
+        }
+        BaseIndustry ind = (BaseIndustry) spec.getNewPluginInstance(market);
+        MutableStat basePrice = new MutableStat(ind.getBuildCost());
+        BmoListener.modifyIndustryConstructionPrice(ind, ind.getMarket(),ind.getSpec().getDowngrade()!=null,basePrice);
+        ind.setBuildCostOverride(basePrice.getModifiedValue());
+        return Misc.getDGSCredits(ind.getBuildCost());
+    }
+
+    public void setArrowPointDown(boolean arrowPointDown) {
+        this.arrowPointDown = arrowPointDown;
+    }
+
+    public boolean isArrowPointDown() {
+        return arrowPointDown;
+    }
+
+    public int getAmountOfIndustriesFromMarket() {
+        int am = 0;
+        for (Industry industry : market.getIndustries()) {
+            if (industry.isIndustry()) {
+                am++;
+            }
+        }
+        return am;
+    }
+
+    @Override
+    public void render(float alphaMult) {
+        if(panelIndicator!=null){
+            arrows.setSize(panelIndicator.getPosition().getWidth(),panelIndicator.getPosition().getHeight());
+            if(!isArrowPointDown()){
+                arrows.setAngle(90);
+            }
+            else{
+                arrows.setAngle(0);
+            }
+            arrows.renderAtCenter(panelIndicator.getPosition().getCenterX(), panelIndicator.getPosition().getCenterY());
+        }
+    }
+}
