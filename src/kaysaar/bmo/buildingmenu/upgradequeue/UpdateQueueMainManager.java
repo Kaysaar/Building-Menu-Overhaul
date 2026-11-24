@@ -326,117 +326,68 @@ public class UpdateQueueMainManager implements EveryFrameScript {
         util.advance(amount);
         if (CoreUITabId.CARGO.equals(Global.getSector().getCampaignUI().getCurrentCoreTab())) {
             Object overview = getOverview();
-            if (overview != null) {
-                MarketAPI currentlyAffectedMarket = null;
-                for (UIComponentAPI componentAPI : ReflectionUtilis.getChildrenCopy((UIPanelAPI) overview)) {
-                    if (componentAPI instanceof CommodityPanel) {
-                        currentlyAffectedMarket = (MarketAPI) ReflectionUtilis.getPrivateVariable("market", componentAPI);
-                        break;
-                    }
-                }
-                if (currentlyAffectedMarket != null) {
-                    if (!currentlyAffectedMarket.getMemory().contains(memKey)) {
-                        currentlyAffectedMarket.getMemory().set(memKey, new UpdateQueueMarketManager());
-                    }
-                    UpdateQueueMarketManager man = (UpdateQueueMarketManager) currentlyAffectedMarket.getMemory().get(memKey);
-                    Iterator<UpdateQueueInstance> ques = man.queues.iterator();
-                    while (ques.hasNext()) {
-                        UpdateQueueInstance que = ques.next();
-                        if (!currentlyAffectedMarket.hasIndustry(que.lastId) && !currentlyAffectedMarket.getConstructionQueue().hasItem(que.lastId)) {
-                            queueMessage(que);
-                            refreshMarketUI(overview);
-                            que.clear();
-                            ques.remove();
-                        } else if (currentlyAffectedMarket.hasIndustry(que.lastId)) {
-                            Industry ind = currentlyAffectedMarket.getIndustry(que.lastId);
-                            if (!ind.isBuilding() && !ind.isUpgrading()) {
-                                String attempt = que.getNextInLine();
-                                if (currentlyAffectedMarket.hasIndustry(que.getNextPrevInLine())) {
-                                    que.popFromTop();
-                                    if (que.getCurrIdOfUpgrade() == null) {
-                                        refreshMarketUI(overview);
-                                        que.clear();
-                                        ques.remove();
-                                    }
-                                    String prev = ind.getSpec().getUpgrade();
-                                    ind.getSpec().setUpgrade(que.getCurrIdOfUpgrade());
-                                    ind.startUpgrading();
-                                    ind.getSpec().setUpgrade(prev);
-                                    MessageIntel intel = new MessageIntel(ind.getCurrentName() + " at " + currentlyAffectedMarket.getName(), Misc.getBasePlayerColor());
-                                    intel.addLine(BaseIntelPlugin.BULLET + "Upgrade started");
-                                    intel.setIcon(Global.getSector().getPlayerFaction().getCrest());
-                                    intel.setSound(BaseIntelPlugin.getSoundStandardUpdate());
-                                    Global.getSector().getCampaignUI().addMessage(intel, CommMessageAPI.MessageClickAction.COLONY_INFO, currentlyAffectedMarket);
-                                    refreshMarketUI(overview);
-                                } else {
-                                    queueMessage(que);
-                                    refreshMarketUI(overview);
-                                    que.clear();
-                                    ques.remove();
-                                }
-
-
-                            }
-
-                        }
-                    }
-                }
-
-            }
-        } else {
-            if (util.intervalElapsed()) {
-                for (MarketAPI playerMarket : Misc.getPlayerMarkets(true)) {
-                    if (!playerMarket.getMemory().contains(memKey)) {
-                        playerMarket.getMemory().set(memKey, new UpdateQueueMarketManager());
-                    }
-                    UpdateQueueMarketManager man = (UpdateQueueMarketManager) playerMarket.getMemory().get(memKey);
-                    Iterator<UpdateQueueInstance> ques = man.queues.iterator();
-                    while (ques.hasNext()) {
-                        UpdateQueueInstance que = ques.next();
-                        if(que.getCurrIdOfUpgrade()==null){
-                            que.clear();
-                            ques.remove();
-                        }
-                        else{
-                            if (playerMarket.hasIndustry(que.getCurrIdOfUpgrade())) {
-                                Industry ind = playerMarket.getIndustry(que.getCurrIdOfUpgrade());
-                                if (!ind.isBuilding() && !ind.isUpgrading()) {
-                                    String attempt = que.getNextInLine();
-                                    if (playerMarket.hasIndustry(que.getNextPrevInLine())) {
-                                        que.popFromTop();
-                                        if (que.getCurrIdOfUpgrade() == null) {
-                                            que.clear();
-                                            ques.remove();
-                                        }
-                                        else{
-                                            String prev = ind.getSpec().getUpgrade();
-                                            ind.getSpec().setUpgrade(que.getCurrIdOfUpgrade());
-                                            ind.startUpgrading();
-                                            ind.getSpec().setUpgrade(prev);
-                                            MessageIntel intel = new MessageIntel(ind.getCurrentName() + " at " + playerMarket.getName(), Misc.getBasePlayerColor());
-                                            intel.addLine(BaseIntelPlugin.BULLET + "Upgrade started");
-                                            intel.setIcon(Global.getSector().getPlayerFaction().getCrest());
-                                            intel.setSound(BaseIntelPlugin.getSoundStandardUpdate());
-                                            Global.getSector().getCampaignUI().addMessage(intel, CommMessageAPI.MessageClickAction.COLONY_INFO, playerMarket);
-                                        }
-
-
-                                    } else {
-                                        queueMessage(que);
-                                        que.clear();
-                                        ques.remove();
-                                    }
-                                }
-                            }
-                        }
-
-
-                    }
-
+            if (overview == null) return;
+            for (UIComponentAPI component : ReflectionUtilis.getChildrenCopy((UIPanelAPI) overview)) {
+                if (component instanceof CommodityPanel) {
+                    MarketAPI market = (MarketAPI) ReflectionUtilis.getPrivateVariable("market", component);
+                    if (market != null && advanceQueues(market)) refreshMarketUI(overview);
+                    break;
                 }
             }
+        } else if (util.intervalElapsed()) {
+            for (MarketAPI market : Misc.getPlayerMarkets(true)) advanceQueues(market);
         }
+    }
 
+    private static boolean advanceQueues(MarketAPI market) {
+        if (!(market.getMemoryWithoutUpdate().get(memKey) instanceof UpdateQueueMarketManager manager)) return false;
+        manager.applyPaidBuildPrices(market);
+        boolean changed = false;
+        Iterator<UpdateQueueInstance> queues = manager.queues.iterator();
+        while (queues.hasNext()) {
+            UpdateQueueInstance queue = queues.next();
+            String currentId = queue.getCurrIdOfUpgrade();
+            if (currentId == null) {
+                queues.remove();
+                changed = true;
+                continue;
+            }
+
+            Industry industry = market.getIndustry(currentId);
+            if (industry == null) {
+                if (market.getConstructionQueue().hasItem(currentId)) continue;
+                Industry previous = market.getIndustry(queue.getLastId());
+                if (previous != null && previous.isUpgrading()
+                        && currentId.equals(ReflectionUtilis.getPrivateVariableFromSuperClass("upgradeId", previous))) continue;
+                queueMessage(queue);
+                queues.remove();
+                changed = true;
+                continue;
+            }
+
+            if (industry.isBuilding()) continue;
+            String next = queue.getNextInLine();
+            if (next == null) {
+                queues.remove();
+                changed = true;
+                continue;
+            }
+            String previousUpgrade = industry.getSpec().getUpgrade();
+            industry.getSpec().setUpgrade(next);
+            try {
+                industry.startUpgrading();
+            } finally {
+                industry.getSpec().setUpgrade(previousUpgrade);
+            }
+            queue.popFromTop();
+            MessageIntel intel = new MessageIntel(industry.getCurrentName() + " at " + market.getName(), Misc.getBasePlayerColor());
+            intel.addLine(BaseIntelPlugin.BULLET + "Upgrade started");
+            intel.setIcon(Global.getSector().getPlayerFaction().getCrest());
+            intel.setSound(BaseIntelPlugin.getSoundStandardUpdate());
+            Global.getSector().getCampaignUI().addMessage(intel, CommMessageAPI.MessageClickAction.COLONY_INFO, market);
+            changed = true;
+        }
+        return changed;
     }
 
     private static void queueMessage(UpdateQueueInstance que) {

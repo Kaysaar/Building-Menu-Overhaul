@@ -22,5 +22,11 @@ public class BmoListener {
         });
     }
 
+    public static int getIndustryConstructionPrice(Industry industry, boolean isForUpgrade) {
+        MutableStat price = new MutableStat(industry.getBuildCost());
+        modifyIndustryConstructionPrice(industry, industry.getMarket(), isForUpgrade, price);
+        return Math.max(0, (int) price.getModifiedValue());
+    }
+
 }
 

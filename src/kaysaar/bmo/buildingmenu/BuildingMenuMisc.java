@@ -6,7 +6,6 @@ import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.*;
 import com.fs.starfarer.api.campaign.econ.Industry;
 import com.fs.starfarer.api.campaign.econ.MarketAPI;
-import com.fs.starfarer.api.combat.MutableStat;
 import com.fs.starfarer.api.impl.campaign.econ.impl.BaseIndustry;
 import com.fs.starfarer.api.impl.campaign.econ.impl.ItemEffectsRepo;
 import com.fs.starfarer.api.impl.campaign.intel.BaseIntelPlugin;
@@ -22,7 +21,6 @@ import kaysaar.bmo.buildingmenu.additionalreq.AdditionalReqManager;
 import kaysaar.bmo.buildingmenu.industrytags.IndustryTagManager;
 import kaysaar.bmo.buildingmenu.industrytags.IndustryTagType;
 import kaysaar.bmo.buildingmenu.upgradepaths.IndustryItemsPanel;
-import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueMainManager;
 import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueMarketManager;
 
 import java.awt.*;
@@ -340,19 +338,20 @@ public class BuildingMenuMisc {
         return map;
     }
     public static void startQueue(String industryId,MarketAPI market) {
-        UpdateQueueMarketManager manager = (UpdateQueueMarketManager) market.getMemory().get(UpdateQueueMainManager.memKey);
-        Set<String> str = BuildingMenuMisc.getUpgradePath(industryId);
-        manager.addNewQueue(str,market);
-        Industry ind =Global.getSettings().getIndustrySpec(manager.getQueue(industryId).getCurrIdOfUpgrade()).getNewPluginInstance(market);
-        int cost = BuildingMenuMisc.getCostAndTimeFromPath(BuildingMenuMisc.getUpgradePath(industryId),market).one.intValue();
-        Misc.getCurrentlyBeingConstructed(market);
-        market.getConstructionQueue().addToEnd(ind.getId(), (int) ind.getBuildCost());
+        LinkedHashSet<String> path = getUpgradePath(industryId);
+        String first = path.iterator().next();
+        if (market.hasIndustry(first) || market.getConstructionQueue().hasItem(first)) return;
+        LinkedHashMap<String, Float> prices = UpdateQueueMarketManager.getStagePrices(path, market);
+        float cost = 0f;
+        for (float price : prices.values()) cost += price;
         MutableValue credits = Global.getSector().getPlayerFleet().getCargo().getCredits();
+        if (credits.get() < cost) return;
+        UpdateQueueMarketManager manager = UpdateQueueMarketManager.getOrCreate(market);
+        if (manager.getQueue(first) != null) return;
+        manager.enqueueBuild(market, first, prices.get(first).intValue());
+        manager.addNewQueue(prices);
         credits.subtract(cost);
-        if (credits.get() <= 0.0F) {
-            credits.set(0.0F);
-        }
-        Global.getSector().getCampaignUI().getMessageDisplay().addMessage(String.format("Spent %s", Misc.getDGSCredits((cost)),Global.getSettings().getColor("standardUIIconColor"), Misc.getDGSCredits(cost), Color.ORANGE));
+        Global.getSector().getCampaignUI().getMessageDisplay().addMessage(String.format("Spent %s", Misc.getDGSCredits(cost),Global.getSettings().getColor("standardUIIconColor"), Misc.getDGSCredits(cost), Color.ORANGE));
         Global.getSoundPlayer().playUISound("ui_build_industry", 1, 1);
     }
     public static Set<IndustrySpecAPI> getIndustryTree(String progenitor) {
@@ -422,11 +421,8 @@ public class BuildingMenuMisc {
         Pair<Float, Float> money = new Pair<>(0f, 0f);
         boolean upgrade = false;
         for (String s : path) {
-            BaseIndustry ind = (BaseIndustry) Global.getSettings().getIndustrySpec(s).getNewPluginInstance(market);
-            MutableStat basePrice = new MutableStat(ind.getBuildCost());
-            BmoListener.modifyIndustryConstructionPrice(ind, ind.getMarket(),upgrade,basePrice);
-            ind.setBuildCostOverride(basePrice.getModifiedValue());
-            money.one += ind.getBuildCost();
+            Industry ind = Global.getSettings().getIndustrySpec(s).getNewPluginInstance(market);
+            money.one += BmoListener.getIndustryConstructionPrice(ind, upgrade);
             money.two += ind.getBuildTime();
             upgrade = true;
         }
@@ -434,42 +430,46 @@ public class BuildingMenuMisc {
     }
 
     public static boolean canBuildAllInPath(String master, MarketAPI market) {
-        float money = 0f;
-        boolean metAllAvailable = true;
-        for (String s : getUpgradePath(master)) {
-            Industry ind = Global.getSettings().getIndustrySpec(s).getNewPluginInstance(market);
-            if (!ind.isAvailableToBuild() || !AdditionalReqManager.getInstance().doesMetReq(ind.getSpec().getId(), market)) {
-                metAllAvailable = false;
-                break;
-            }
-            money += ind.getBuildCost();
-        }
-        return metAllAvailable && money <= Global.getSector().getPlayerFleet().getCargo().getCredits().get();
-
+        return canBuildPath(master, market, false);
     }
 
     public static boolean canBuildAllInPathIgnoreLast(String master, MarketAPI market) {
+        return canBuildPath(master, market, true);
+    }
+
+    private static boolean canBuildPath(String master, MarketAPI market, boolean ignoreLast) {
         float money = 0f;
-        boolean metAllAvailable = true;
+        boolean upgrade = false;
         for (String s : getUpgradePath(master)) {
+            if (ignoreLast && s.equals(master)) break;
             Industry ind = Global.getSettings().getIndustrySpec(s).getNewPluginInstance(market);
-            if(ind.getSpec().getId().equals(master))continue;
             if (!ind.isAvailableToBuild() || !AdditionalReqManager.getInstance().doesMetReq(ind.getSpec().getId(), market)) {
-
-                metAllAvailable = false;
-
+                return false;
             }
-            money += ind.getBuildCost();
+            money += BmoListener.getIndustryConstructionPrice(ind, upgrade);
+            upgrade = true;
         }
-        return metAllAvailable && money <= Global.getSector().getPlayerFleet().getCargo().getCredits().get();
-
+        return money <= Global.getSector().getPlayerFleet().getCargo().getCredits().get();
     }
 
     public static void createTooltipForIndustry(
             BaseIndustry ind, Industry.IndustryTooltipMode mode, TooltipMakerAPI tooltip, boolean expanded, boolean hasTitle, float width, boolean showMods, boolean isHover, boolean isInQueue) {
-        MutableStat basePrice = new MutableStat(ind.getBuildCost());
-        BmoListener.modifyIndustryConstructionPrice(ind, ind.getMarket(),mode== Industry.IndustryTooltipMode.UPGRADE,basePrice);
-        ind.setBuildCostOverride(basePrice.getModifiedValue());
+        if (mode != Industry.IndustryTooltipMode.ADD_INDUSTRY && mode != Industry.IndustryTooltipMode.UPGRADE && !isInQueue) {
+            renderIndustryTooltip(ind, mode, tooltip, expanded, hasTitle, width, showMods, isHover, false);
+            return;
+        }
+        boolean upgrade = isInQueue ? getUpgradePath(ind.getId()).size() > 1 : mode == Industry.IndustryTooltipMode.UPGRADE;
+        Float original = ind.getBuildCostOverride();
+        ind.setBuildCostOverride(BmoListener.getIndustryConstructionPrice(ind, upgrade));
+        try {
+            renderIndustryTooltip(ind, mode, tooltip, expanded, hasTitle, width, showMods, isHover, isInQueue);
+        } finally {
+            ReflectionUtilis.setPrivateVariableFromSuperclass("buildCostOverride", ind, original);
+        }
+    }
+
+    private static void renderIndustryTooltip(
+            BaseIndustry ind, Industry.IndustryTooltipMode mode, TooltipMakerAPI tooltip, boolean expanded, boolean hasTitle, float width, boolean showMods, boolean isHover, boolean isInQueue) {
         float pad = 3f;
         float opad = 10f;
         if (IndustryTagManager.getTagsSpecBasedOnType(IndustryTagType.MOD).isEmpty()) {
@@ -730,8 +730,7 @@ public class BuildingMenuMisc {
     }
 
     private static float getSpecCost(IndustrySpecAPI spec,MarketAPI market) {
-        // Replace this logic with the actual method to get the cost in your implementation.
-        return spec.getNewPluginInstance(market).getBuildCost(); // Example placeholder method
+        return BmoListener.getIndustryConstructionPrice(spec.getNewPluginInstance(market), false);
     }
 
     public static String getIndustryString(IndustrySpecAPI industry) {

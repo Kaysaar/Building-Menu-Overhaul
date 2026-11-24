@@ -6,6 +6,7 @@ import com.fs.starfarer.api.campaign.BaseCustomDialogDelegate;
 import com.fs.starfarer.api.campaign.CustomDialogDelegate;
 import com.fs.starfarer.api.campaign.econ.Industry;
 import com.fs.starfarer.api.campaign.econ.MarketAPI;
+import com.fs.starfarer.api.campaign.rules.MemoryAPI;
 import com.fs.starfarer.api.campaign.listeners.DialogCreatorUI;
 import com.fs.starfarer.api.campaign.listeners.IndustryOptionProvider;
 import com.fs.starfarer.api.impl.campaign.econ.impl.BaseIndustry;
@@ -16,6 +17,9 @@ import com.fs.starfarer.api.util.Misc;
 import com.fs.starfarer.api.util.Pair;
 import kaysaar.bmo.buildingmenu.BuildingMenuMisc;
 import kaysaar.bmo.buildingmenu.additionalreq.AdditionalReqManager;
+import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueInstance;
+import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueMainManager;
+import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueMarketManager;
 
 import java.awt.*;
 import java.util.ArrayList;
@@ -31,6 +35,24 @@ public class BMOUpgradeButtonsListener implements IndustryOptionProvider {
     public static Object CORONAL = new Object();
     public static Object RESEARCH_CENTER = new Object();
     public static Object PROGRAMMING = new Object();
+
+    static String getUpgradeCostKey(Industry industry, String upgradeId) {
+        return "$bmo_paid_upgrade_cost_" + industry.getId() + ":" + upgradeId;
+    }
+
+    private float getUpgradeRefund(Industry industry, IndustrySpecAPI upgrade) {
+        MemoryAPI memory = industry.getMarket().getMemoryWithoutUpdate();
+        String key = getUpgradeCostKey(industry, upgrade.getId());
+        float cost = memory.contains(key) ? memory.getFloat(key) : upgrade.getCost();
+        if (memory.get(UpdateQueueMainManager.memKey) instanceof UpdateQueueMarketManager manager) {
+            UpdateQueueInstance queue = manager.getQueue(upgrade.getId());
+            if (queue != null && upgrade.getId().equals(queue.getCurrIdOfUpgrade())) {
+                cost = queue.queueCopy.getOrDefault(upgrade.getId(), cost);
+            }
+        }
+        return industry.getBuildOrUpgradeProgress() == 0f ? cost : cost * 0.4f;
+    }
+
     @Override
     public List<IndustryOptionData> getIndustryOptions(Industry ind) {
         ArrayList<IndustryOptionData> data = new ArrayList<>();
@@ -64,10 +86,7 @@ public class BMOUpgradeButtonsListener implements IndustryOptionProvider {
         if (opt.id == AOTD_VOK_CANCEL_UPGRADE) {
             String upgradeId = (String) ReflectionUtilis.getPrivateVariableFromSuperClass("upgradeId", opt.ind);
             IndustrySpecAPI upgrdInd = Global.getSettings().getIndustrySpec(upgradeId);
-            String costStr = Misc.getDGSCredits(upgrdInd.getCost());
-            if (opt.ind.getBuildOrUpgradeProgress() != 0.0f) {
-                costStr = Misc.getDGSCredits(upgrdInd.getCost() * 0.4f);
-            }
+            String costStr = Misc.getDGSCredits(getUpgradeRefund(opt.ind, upgrdInd));
             tooltip.addPara("Currently upgrading to : " + upgrdInd.getName() + ". If you cancel the upgrade you will receive %s as refund\n", 10f, Color.ORANGE, "" + costStr);
         }
         if(opt.id == STELLA ){
@@ -97,16 +116,12 @@ public class BMOUpgradeButtonsListener implements IndustryOptionProvider {
                     info.addSpacer(2f);
                     String upgradeId = (String) ReflectionUtilis.getPrivateVariableFromSuperClass("upgradeId",industry);
                     IndustrySpecAPI upgrdInd = Global.getSettings().getIndustrySpec(upgradeId);
-
+                    String costStr = Misc.getDGSCredits(getUpgradeRefund(industry, upgrdInd));
 
                     if (industry.getBuildOrUpgradeProgress() == 0.0f) {
-                        int cost = (int) upgrdInd.getCost();
-                        String costStr = Misc.getDGSCredits(cost);
                         info.addPara("Cancelling the upgrade of " + industry.getCurrentName() + " will refund you the full upgrade cost of %s and it will take effect immediately", opad,
                                 highlight, "" + costStr);
                     } else {
-                        int cost = (int) (upgrdInd.getCost() * 0.4f);
-                        String costStr = Misc.getDGSCredits(cost);
                         info.addPara("Cancelling the in-progress upgrade of " + industry.getCurrentName() + " will refund you %s of the upgrade cost, or %s and it will take effect immediately", opad,
                                 highlight, "40%", costStr);
                     }
@@ -125,14 +140,11 @@ public class BMOUpgradeButtonsListener implements IndustryOptionProvider {
 
                     String upgradeId = (String) ReflectionUtilis.getPrivateVariableFromSuperClass("upgradeId",industry);
                     IndustrySpecAPI upgrdInd = Global.getSettings().getIndustrySpec(upgradeId);
-                    boolean fullRefund = industry.getBuildOrUpgradeProgress() == 0.0f;
-                    if (fullRefund) {
-                        Global.getSector().getPlayerFleet().getCargo().getCredits().add(upgrdInd.getCost());
-                    } else {
-                        Global.getSector().getPlayerFleet().getCargo().getCredits().add(upgrdInd.getCost() * 0.4f);
-
-                    }
+                    if (upgrdInd == null || !industry.isUpgrading()) return;
+                    float refund = getUpgradeRefund(industry, upgrdInd);
                     industry.cancelUpgrade();
+                    industry.getMarket().getMemoryWithoutUpdate().unset(getUpgradeCostKey(industry, upgradeId));
+                    Global.getSector().getPlayerFleet().getCargo().getCredits().add(refund);
 
                 }
 

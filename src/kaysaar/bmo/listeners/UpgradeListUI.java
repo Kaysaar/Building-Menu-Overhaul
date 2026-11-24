@@ -14,6 +14,8 @@ import com.fs.starfarer.api.impl.campaign.ids.Stats;
 import com.fs.starfarer.api.loading.IndustrySpecAPI;
 import com.fs.starfarer.api.ui.*;
 import com.fs.starfarer.api.util.Misc;
+import com.fs.starfarer.api.util.MutableValue;
+import kaysaar.bmo.BmoListener;
 import kaysaar.bmo.buildingmenu.BuildingMenuMisc;
 
 import java.awt.*;
@@ -160,7 +162,7 @@ public class UpgradeListUI implements CustomDialogDelegate {
         panel.addUIElement(panelTooltip).inTL(0.0F, 0.0F);
     }
     public boolean canAfford(Industry ind){
-        return Global.getSector().getPlayerFleet().getCargo().getCredits().get()>=ind.getBuildCost();
+        return Global.getSector().getPlayerFleet().getCargo().getCredits().get() >= BmoListener.getIndustryConstructionPrice(ind, true);
     }
 
     private String getDayOrDays(int buildTime) {
@@ -184,21 +186,32 @@ public class UpgradeListUI implements CustomDialogDelegate {
     }
 
     public void customDialogConfirm() {
-        if (selected == null) return;
-        industry.getSpec().setUpgrade(selected);
+        if (selected == null || industry.isBuilding()) return;
+        IndustrySpecAPI upgradeSpec = getIndustrySpec(selected);
+        MarketAPI market = industry.getMarket();
+        Industry upgrade = upgradeSpec.getNewPluginInstance(market);
+        float cost = BmoListener.getIndustryConstructionPrice(upgrade, true);
+        MutableValue credits = Global.getSector().getPlayerFleet().getCargo().getCredits();
+        if (!upgrade.isAvailableToBuild() || credits.get() < cost) return;
+
+        IndustrySpecAPI currentSpec = industry.getSpec();
+        String previousUpgrade = currentSpec.getUpgrade();
+        currentSpec.setUpgrade(selected);
+        try {
+            industry.startUpgrading();
+        } finally {
+            currentSpec.setUpgrade(previousUpgrade);
+        }
         SpecialItemData specItem = industry.getSpecialItem();
-        for (String tag : getIndustrySpec(selected).getTags()) {
+        for (String tag : upgradeSpec.getTags()) {
             if(tag.contains("consumes")){
                 if (specItem != null) {
                     industry.setSpecialItem(null);
                 }
             }
         }
-        industry.startUpgrading();
-        industry.getSpec().setUpgrade(null);
-
-        float cost = getIndustrySpec(selected).getCost();
-        Global.getSector().getPlayerFleet().getCargo().getCredits().subtract(cost);
+        credits.subtract(cost);
+        market.getMemoryWithoutUpdate().set(BMOUpgradeButtonsListener.getUpgradeCostKey(industry, selected), cost);
         Global.getSoundPlayer().playUISound("ui_upgrade_industry", 1, 1);
 
     }

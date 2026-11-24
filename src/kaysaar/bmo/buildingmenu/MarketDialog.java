@@ -8,15 +8,12 @@ import com.fs.starfarer.api.campaign.CoreUIAPI;
 import com.fs.starfarer.api.campaign.InteractionDialogAPI;
 import com.fs.starfarer.api.campaign.econ.Industry;
 import com.fs.starfarer.api.campaign.econ.MarketAPI;
-import com.fs.starfarer.api.combat.MutableStat;
-import com.fs.starfarer.api.impl.campaign.econ.impl.BaseIndustry;
 import com.fs.starfarer.api.input.InputEventAPI;
 import com.fs.starfarer.api.ui.*;
 import com.fs.starfarer.api.util.IntervalUtil;
 import com.fs.starfarer.api.util.Misc;
 import com.fs.starfarer.api.util.MutableValue;
 import kaysaar.bmo.BmoListener;
-import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueMainManager;
 import kaysaar.bmo.buildingmenu.upgradequeue.UpdateQueueMarketManager;
 import org.lwjgl.input.Keyboard;
 
@@ -24,7 +21,6 @@ import java.awt.*;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.List;
-import java.util.Set;
 
 public class MarketDialog extends BasePopUpDialog {
 
@@ -257,48 +253,19 @@ public class MarketDialog extends BasePopUpDialog {
     }
     @Override
     public void applyConfirmScript() {
-        if(table.specToBuilt!=null){
-
-            if(isInUpgradeMode){
-                if(!market.getMemory().contains(UpdateQueueMainManager.memKey)){
-                    market.getMemory().set(UpdateQueueMainManager.memKey,new UpdateQueueMarketManager());
-                }
-                UpdateQueueMarketManager manager = (UpdateQueueMarketManager) market.getMemory().get(UpdateQueueMainManager.memKey);
-                Set<String> str = BuildingMenuMisc.getUpgradePath(table.specToBuilt.getId());
-                manager.addNewQueue(str,market);
-                Industry ind =Global.getSettings().getIndustrySpec(manager.getQueue(table.specToBuilt.getId()).getCurrIdOfUpgrade()).getNewPluginInstance(market);
-                int cost = BuildingMenuMisc.getCostAndTimeFromPath(BuildingMenuMisc.getUpgradePath(table.specToBuilt.getId()),market).one.intValue();
-                Misc.getCurrentlyBeingConstructed(market);
-                this.market.getConstructionQueue().addToEnd(ind.getId(), (int) ind.getBuildCost());
-                MutableValue credits = Global.getSector().getPlayerFleet().getCargo().getCredits();
-                credits.subtract(cost);
-                if (credits.get() <= 0.0F) {
-                    credits.set(0.0F);
-                }
-                Global.getSector().getCampaignUI().getMessageDisplay().addMessage(String.format("Spent %s", Misc.getDGSCredits((cost)),Global.getSettings().getColor("standardUIIconColor"), Misc.getDGSCredits(cost), Color.ORANGE));
-                Global.getSoundPlayer().playUISound("ui_build_industry", 1, 1);
-            }
-            else{
-                BaseIndustry ind = (BaseIndustry) table.specToBuilt.getNewPluginInstance(market);
-                MutableStat basePrice = new MutableStat(ind.getBuildCost());
-                BmoListener.modifyIndustryConstructionPrice(ind, ind.getMarket(),false,basePrice);
-                ind.setBuildCostOverride(basePrice.getModifiedValue());
-                int cost = (int) ind.getBuildCost();
-                Misc.getCurrentlyBeingConstructed(market);
-                this.market.getConstructionQueue().addToEnd(ind.getId(), cost);
-                MutableValue credits = Global.getSector().getPlayerFleet().getCargo().getCredits();
-                credits.subtract(cost);
-                if (credits.get() <= 0.0F) {
-                    credits.set(0.0F);
-                }
-                Global.getSector().getCampaignUI().getMessageDisplay().addMessage(String.format("Spent %s", Misc.getDGSCredits((cost)),Global.getSettings().getColor("standardUIIconColor"), Misc.getDGSCredits(cost), Color.ORANGE));
-                Global.getSoundPlayer().playUISound("ui_build_industry", 1, 1);
-            }
-
-
-
-
-
+        if (table.specToBuilt == null) return;
+        Industry industry = table.specToBuilt.getNewPluginInstance(market);
+        if (isInUpgradeMode) {
+            if (!isAvailableToBuild(industry, market, true)) return;
+            BuildingMenuMisc.startQueue(industry.getId(), market);
+        } else {
+            int cost = BmoListener.getIndustryConstructionPrice(industry, false);
+            MutableValue credits = Global.getSector().getPlayerFleet().getCargo().getCredits();
+            if (!canBuildIndustry(industry, market) || credits.get() < cost) return;
+            UpdateQueueMarketManager.getOrCreate(market).enqueueBuild(market, industry.getId(), cost);
+            credits.subtract(cost);
+            Global.getSector().getCampaignUI().getMessageDisplay().addMessage(String.format("Spent %s", Misc.getDGSCredits(cost)), Global.getSettings().getColor("standardUIIconColor"), Misc.getDGSCredits(cost), Color.ORANGE);
+            Global.getSoundPlayer().playUISound("ui_build_industry", 1, 1);
         }
         ReflectionUtilis.invokeMethod("recreateWithEconUpdate",overview);
     }
@@ -348,15 +315,20 @@ public class MarketDialog extends BasePopUpDialog {
     }
 
     public static boolean isAvailableToBuild(Industry ind,MarketAPI market,boolean isInUpgradeMode){
-        boolean exceededLimit = ind.isIndustry()&& Misc.getMaxIndustries(ind.getMarket())<=Misc.getNumIndustries(market);
-        if(isInUpgradeMode){
-            return BuildingMenuMisc.canBuildAllInPath(ind.getSpec().getId(),market)&&!exceededLimit;
+        if (isInUpgradeMode) {
+            return hasIndustryCapacity(ind, market) && BuildingMenuMisc.canBuildAllInPath(ind.getId(), market);
         }
-        BaseIndustry indT = (BaseIndustry) ind;
-        MutableStat basePrice = new MutableStat(ind.getBuildCost());
-        BmoListener.modifyIndustryConstructionPrice(ind, ind.getMarket(),indT.getSpec().getDowngrade()!=null,basePrice);
-        indT.setBuildCostOverride(basePrice.getModifiedValue());
-        return  ind.isAvailableToBuild()&&!exceededLimit&&Global.getSector().getPlayerFleet().getCargo().getCredits().get()>=ind.getBuildCost()&&!market.getConstructionQueue().hasItem(ind.getSpec().getId());
+        return canBuildIndustry(ind, market) && Global.getSector().getPlayerFleet().getCargo().getCredits().get()
+                >= BmoListener.getIndustryConstructionPrice(ind, false);
+    }
+
+    private static boolean canBuildIndustry(Industry industry, MarketAPI market) {
+        return industry.isAvailableToBuild() && hasIndustryCapacity(industry, market)
+                && !market.hasIndustry(industry.getId()) && !market.getConstructionQueue().hasItem(industry.getId());
+    }
+
+    private static boolean hasIndustryCapacity(Industry industry, MarketAPI market) {
+        return !industry.isIndustry() || Misc.getMaxIndustries(industry.getMarket()) > Misc.getNumIndustries(market);
     }
 
 }

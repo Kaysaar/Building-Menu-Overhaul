@@ -4,7 +4,6 @@ import ashlib.data.plugins.ui.models.resizable.ImageViewer;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.econ.Industry;
 import com.fs.starfarer.api.campaign.econ.MarketAPI;
-import com.fs.starfarer.api.combat.MutableStat;
 import com.fs.starfarer.api.graphics.SpriteAPI;
 import com.fs.starfarer.api.impl.campaign.econ.impl.BaseIndustry;
 import com.fs.starfarer.api.impl.campaign.ids.Stats;
@@ -99,11 +98,12 @@ public class IndustryButton extends CustomButton {
         label = tooltip.addPara(getBuildingTimeToStr(spec), Color.ORANGE, 0f);
         label.autoSizeToWidth(125);
         label.getPosition().inTL(438 - indent - (label.computeTextWidth(label.getText()) / 2), heightLabel);
-        if (spec.getNewPluginInstance(market).getBuildCost() > Global.getSector().getPlayerFleet().getCargo().getCredits().get()) {
-            label = tooltip.addPara(getCostStr(spec,market), Misc.getNegativeHighlightColor(), 0f);
+        if (spec.hasTag("parent_item")) {
+            label = tooltip.addPara("Variable", Color.ORANGE, 0f);
         } else {
-            label = tooltip.addPara(getCostStr(spec,market), Color.ORANGE, 0f);
-
+            int cost = BmoListener.getIndustryConstructionPrice(industry, false);
+            float credits = Global.getSector().getPlayerFleet().getCargo().getCredits().get();
+            label = tooltip.addPara(Misc.getDGSCredits(cost), cost > credits ? Misc.getNegativeHighlightColor() : Color.ORANGE, 0f);
         }
 
         label.autoSizeToWidth(115);
@@ -140,11 +140,7 @@ public class IndustryButton extends CustomButton {
         if (spec.hasTag("parent_item")) {
             return "Variable";
         }
-        BaseIndustry ind = (BaseIndustry) spec.getNewPluginInstance(market);
-        MutableStat basePrice = new MutableStat(ind.getBuildCost());
-        BmoListener.modifyIndustryConstructionPrice(ind, ind.getMarket(),ind.getSpec().getDowngrade()!=null,basePrice);
-        ind.setBuildCostOverride(basePrice.getModifiedValue());
-        return Misc.getDGSCredits(ind.getBuildCost());
+        return Misc.getDGSCredits(BmoListener.getIndustryConstructionPrice(spec.getNewPluginInstance(market), false));
     }
 
     public void setArrowPointDown(boolean arrowPointDown) {

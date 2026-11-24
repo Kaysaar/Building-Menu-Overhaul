@@ -48,6 +48,7 @@ public class UpgradePathUI extends PopUpUI {
     public UpgradePathUI(CustomUpgradePath upgradePath, MarketDialog dialog) {
         this.upgradePath = upgradePath;
         this.marketDialog = dialog;
+        this.market = dialog.market;
         width = upgradePath.columns * imagewidth + ((upgradePath.columns - 1) * spaceBetweenColumns + spacers * 2);
         height = upgradePath.rows * imageheight + ((upgradePath.rows - 1) * spaceBetweenRows + spacers * 3);
     }
@@ -70,7 +71,7 @@ public class UpgradePathUI extends PopUpUI {
         TooltipMakerAPI tooltip = mainPanel.createUIElement(panelAPI.getPosition().getWidth() , panelAPI.getPosition().getHeight(), true);
         boolean did = false;
         for (final Map.Entry<String, Vector2f> entry : upgradePath.getIndustryCoordinates().entrySet()) {
-            IndustryImageWithTitle title = new IndustryImageWithTitle(entry.getKey(),did,marketDialog.market);
+            IndustryImageWithTitle title = new IndustryImageWithTitle(entry.getKey(),did,market);
             did =true;
             tooltip.addCustom(title.getMainPanel(), 0f).getPosition().inTL(calculateX(entry.getValue().x), calculateY(entry.getValue().y));
             tooltip.addTooltipToPrevious(new TooltipMakerAPI.TooltipCreator() {
@@ -86,7 +87,7 @@ public class UpgradePathUI extends PopUpUI {
 
                 @Override
                 public void createTooltip(TooltipMakerAPI tooltip, boolean expanded, Object tooltipParam) {
-                    BaseIndustry ind = (BaseIndustry) Global.getSettings().getIndustrySpec(entry.getKey()).getNewPluginInstance(marketDialog.market);
+                    BaseIndustry ind = (BaseIndustry) Global.getSettings().getIndustrySpec(entry.getKey()).getNewPluginInstance(market);
                     BuildingMenuMisc.createTooltipForIndustry(ind, Industry.IndustryTooltipMode.ADD_INDUSTRY,tooltip,expanded,true,400,true,true,true);
                 }
             }, TooltipMakerAPI.TooltipLocation.RIGHT,false);
@@ -187,6 +188,10 @@ public class UpgradePathUI extends PopUpUI {
                         marketDialog.table.specToBuilt = Global.getSettings().getIndustrySpec(imageWithTitle.getIndustryId());
                         marketDialog.showcaseUI.setCurrentSpec(marketDialog.table.specToBuilt);
                         marketDialog.setInUpgradeMode(true);
+                        Industry target = marketDialog.table.specToBuilt.getNewPluginInstance(market);
+                        boolean available = MarketDialog.isAvailableToBuild(target, market, true);
+                        ButtonAPI confirm = marketDialog.getConfirmButton();
+                        if (confirm.isEnabled() != available) confirm.setEnabled(available);
                         marketDialog.showcaseUI.recreateIndustryPanel(true);
                         forceDismiss();
                     }
@@ -206,6 +211,6 @@ public class UpgradePathUI extends PopUpUI {
     public void onExit() {
         super.onExit();
         imageWithTitles.clear();
-        marketDialog.util = new IntervalUtil(0.4f, 0.4f);
+        if (marketDialog != null) marketDialog.util = new IntervalUtil(0.4f, 0.4f);
     }
 }
